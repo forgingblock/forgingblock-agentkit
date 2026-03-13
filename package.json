@@ -1,7 +1,8 @@
 {
-  "name": "forgingblock-agent",
+  "name": "forgingblock-agentkit",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

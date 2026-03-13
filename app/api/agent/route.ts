@@ -4,6 +4,31 @@ import { createAgent } from "./create-agent"
 import { Message, generateId, generateText } from "ai"
 import { getSession, saveSession } from "@/app/lib/agent-session"
 
+import {
+  extractPaymentState,
+  addPaymentState,
+  removePaymentState
+} from "@/app/lib/payment-state"
+
+const CONFIRM_WORDS = [
+  "confirm",
+  "confirm payment",
+  "yes",
+  "pay now",
+  "execute payment",
+  "go ahead"
+]
+
+function isConfirmation(text: string) {
+  const t = text.toLowerCase()
+  return CONFIRM_WORDS.some(w => t.includes(w))
+}
+
+type ToolResult = {
+  toolName: string
+  result: string
+}
+
 export async function POST(
   req: Request & { json: () => Promise<AgentRequest> }
 ): Promise<NextResponse<AgentResponse>> {
@@ -18,7 +43,6 @@ export async function POST(
       throw new Error("userMessage required")
     }
 
-    // auto-create session if not provided
     if (!sessionId) {
       sessionId = crypto.randomUUID()
     }
@@ -26,6 +50,24 @@ export async function POST(
     const agent = await createAgent()
 
     const history = getSession(sessionId)
+
+    const paymentState = extractPaymentState(history)
+
+    // --------------------------------------------------
+    // Confirmation shortcut
+    // --------------------------------------------------
+
+    if (paymentState && isConfirmation(userMessage)) {
+
+      return NextResponse.json({
+        sessionId,
+        response: "Executing payment transaction..."
+      })
+    }
+
+    // --------------------------------------------------
+    // Normal agent flow
+    // --------------------------------------------------
 
     const messages: Message[] = [
       ...history,
@@ -49,21 +91,17 @@ export async function POST(
       maxSteps: agent.maxSteps
     })
 
-    const { text, toolCalls, toolResults, finishReason } = result
+    const { text } = result
 
-    console.log("----- TOOL CALLS -----")
-    console.dir(toolCalls, { depth: null })
+    const toolResults = result.toolResults as ToolResult[] | undefined
 
     console.log("----- TOOL RESULTS -----")
     console.dir(toolResults, { depth: null })
 
-    console.log("----- FINISH REASON -----")
-    console.log(finishReason)
-
     console.log("----- FINAL TEXT -----")
     console.log(text)
 
-    const updatedMessages: Message[] = [
+    let updatedMessages: Message[] = [
       ...messages,
       {
         id: generateId(),
@@ -71,6 +109,39 @@ export async function POST(
         content: text
       }
     ]
+
+    // --------------------------------------------------
+    // Store payment state from create_payment
+    // --------------------------------------------------
+
+    if (toolResults) {
+
+      for (const r of toolResults) {
+
+        if (r.toolName === "create_payment") {
+
+          try {
+
+            const parsed = JSON.parse(r.result)
+
+            if (parsed.recommendedTx && parsed.invoiceId) {
+
+              updatedMessages = addPaymentState(updatedMessages, {
+                invoiceId: parsed.invoiceId,
+                recommendedTx: parsed.recommendedTx,
+                verifyUrl: parsed.verifyUrl
+              })
+
+              console.log("Stored payment state", parsed.invoiceId)
+
+            }
+
+          } catch (err) {
+            console.error("Failed parsing tool result", err)
+          }
+        }
+      }
+    }
 
     saveSession(sessionId, updatedMessages)
 
