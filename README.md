@@ -16,8 +16,6 @@ The agent can:
 
 This project is a **reference implementation** showing how AI agents can interact with ForgingBlock crypto payment infrastructure.
 
----
-
 # Installation
 
 Clone the repository:
@@ -32,8 +30,6 @@ Install dependencies:
 ```sh
 npm install
 ```
-
----
 
 # Environment Setup
 
@@ -52,13 +48,9 @@ FB_API_KEY=
 NETWORK_ID=base-mainnet
 ```
 
----
-
 ## OPENAI_API_KEY
 
 API key used for the AI model.
-
----
 
 ## PRIVY_APP_ID
 
@@ -67,8 +59,6 @@ API key used for the AI model.
 Credentials for **Privy embedded wallets**.
 
 You could create in [Privy dashboard](https://dashboard.privy.io/):
-
----
 
 ## FB_API_KEY (optional)
 
@@ -80,8 +70,6 @@ Create an API key in the [dashboard](https://dash.forgingblock.io):
 
 If this variable is **not defined**, the agent can still perform payments but cannot create orders.
 
----
-
 ## NETWORK_ID
 
 Network used by the wallet provider.
@@ -91,8 +79,6 @@ Example:
 ```
 NETWORK_ID=base-mainnet
 ```
-
----
 
 # Run the Development Server
 
@@ -107,8 +93,6 @@ Open the application:
 ```
 http://localhost:3000
 ```
-
----
 
 # Architecture Overview
 
@@ -162,8 +146,6 @@ Because the wallet layer is abstracted through the AgentKit `WalletProvider`, yo
 
 Privy is used here purely as a **convenient example wallet provider**.
 
----
-
 # System Prompt Behavior
 
 The agent operates with a structured system prompt enforcing safe payment execution.
@@ -173,7 +155,7 @@ The agent operates with a structured system prompt enforcing safe payment execut
 When a user provides a checkout URL or checkout ID:
 
 ```
-https://apit.forgingblock.io/api/v1/checkout?id=<checkout_id>
+https://api.forgingblock.io/api/v1/checkout?id=<checkout_id>
 ```
 
 the agent must call:
@@ -317,7 +299,7 @@ Example:
 
 ```
 create_payment(
-  url="https://apit.forgingblock.io/api/v1/checkout?id=..."
+  url="https://api.forgingblock.io/api/v1/checkout?id=..."
 )
 ```
 
@@ -393,7 +375,7 @@ checkout_url
 Example checkout link:
 
 ```
-https://apit.forgingblock.io/api/v1/checkout?id=1234...
+https://api.forgingblock.io/api/v1/checkout?id=1234...
 ```
 
 The merchant shares this link with a customer.
@@ -406,7 +388,7 @@ User provides a checkout:
 
 ```
 Pay this checkout
-https://apit.forgingblock.io/api/v1/checkout?id=...
+https://api.forgingblock.io/api/v1/checkout?id=...
 ```
 
 Agent calls:
@@ -455,16 +437,16 @@ Payment completed
 
 # Chat Session Storage
 
-This example stores chat sessions **in memory**.
+This example stores chat sessions **in memory** for 20 minutes (order is fixed 20-minute lifetime).
 
 This is suitable only for development.
 
 Production deployments should store sessions in:
 
-```
-Redis
-PostgreSQL
-```
+For production deployments, sessions should be stored in a persistent datastore such as:
+
+- **Redis**
+- **PostgreSQL**
 
 This ensures:
 
@@ -480,41 +462,16 @@ This project can be extended with:
 
 ### Persistent Session Storage
 
-```
-Redis
-PostgreSQL
-```
-
----
-
-### Transaction Validation
-
-Validate:
-
-```
-recommendedTx
-chainId
-token contract
-```
-
-before executing transactions.
-
----
-
-### Rate Limiting
-
-Protect API endpoints from abuse.
-
----
+- **Redis**
+- **PostgreSQL**
 
 ### Payment Webhooks
 
-Handle events such as:
+API Reference [Webhook callback](https://forgingblock.readme.io/reference/payment-callback) section:
 
-```
-invoice completed
-invoice expired
-```
+Handle events such as:
+invoice `completed`
+invoice `partially_paid`
 
 ---
 
