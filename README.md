@@ -16,6 +16,16 @@ The agent can:
 
 This project is a **reference implementation** showing how AI agents can interact with ForgingBlock crypto payment infrastructure.
 
+## Quick Demo
+
+### Create Order
+
+![Create Order](img/order.png)
+
+### AI Payment Flow
+
+![AI Payment Flow](img/payment.gif)
+
 # Installation
 
 Clone the repository:
