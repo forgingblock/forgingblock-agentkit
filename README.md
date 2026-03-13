@@ -18,11 +18,11 @@ This project is a **reference implementation** showing how AI agents can interac
 
 ## Quick Demo
 
-### Create Order
+#### Create Order
 
 ![Create Order](img/order.png)
 
-### AI Payment Flow
+#### AI Payment Flow
 
 ![AI Payment Flow](img/payment.gif)
 
