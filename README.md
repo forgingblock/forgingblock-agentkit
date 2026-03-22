@@ -176,6 +176,20 @@ create_payment
 
 The agent **never constructs payment instructions manually**.
 
+> ⚠️ Always use `recommendedTx` returned by the API.
+
+---
+
+### ⚠️ DO NOT USE `watchers`
+
+- `watchers` is NOT a payment source
+- it is often empty
+- it does NOT contain execution data
+
+❌ Do NOT:
+- extract payment address from `watchers`
+- rely on `watchers`
+
 ---
 
 ### Payment Confirmation
@@ -188,7 +202,6 @@ Invoice ID
 Network
 Token
 Amount
-Payment Address
 ```
 
 The user must confirm before the transaction is executed.
@@ -321,7 +334,6 @@ invoiceUrl
 network
 token
 amount
-paymentAddress
 recommendedTx
 verifyUrl
 ```
@@ -415,7 +427,6 @@ Invoice ID
 Network
 Token
 Amount
-Payment Address
 ```
 
 User confirms:
@@ -452,8 +463,6 @@ This example stores chat sessions **in memory** for 20 minutes (order is fixed 2
 This is suitable only for development.
 
 Production deployments should store sessions in:
-
-For production deployments, sessions should be stored in a persistent datastore such as:
 
 - **Redis**
 - **PostgreSQL**
