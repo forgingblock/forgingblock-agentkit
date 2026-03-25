@@ -11,6 +11,7 @@ import {
   wethActionProvider,
 } from "@coinbase/agentkit";
 import { forgingblockActionProvider } from "./actions/forgingblock-provider"
+import { woocommerceActionProvider } from "./actions/woocommerce-provider"
 import fs from "fs";
 
 /**
@@ -99,6 +100,7 @@ export async function prepareAgentkitAndWalletProvider(): Promise<{
       walletActionProvider(),
       erc20ActionProvider(),
       forgingblockActionProvider(),
+      woocommerceActionProvider()
     ];
     const canUseCdpApi = process.env.CDP_API_KEY_ID && process.env.CDP_API_KEY_SECRET;
     if (canUseCdpApi) {

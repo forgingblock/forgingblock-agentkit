@@ -3,25 +3,20 @@ import { NextResponse } from "next/server"
 import { createAgent } from "./create-agent"
 import { Message, generateId, generateText } from "ai"
 import { getSession, saveSession } from "@/app/lib/agent-session"
-
-import {
-  extractPaymentState,
-  addPaymentState,
-  removePaymentState
-} from "@/app/lib/payment-state"
-
-const CONFIRM_WORDS = [
-  "confirm",
-  "confirm payment",
-  "yes",
-  "pay now",
-  "execute payment",
-  "go ahead"
-]
+import { isWoocommerceUrl } from "@/app/lib/url-woocommerce"
+import { extractPaymentState, addPaymentState } from "@/app/lib/payment-state"
 
 function isConfirmation(text: string) {
-  const t = text.toLowerCase()
-  return CONFIRM_WORDS.some(w => t.includes(w))
+  const t = text.trim().toLowerCase()
+  return (
+    t === "confirm" ||
+    t === "yes" ||
+    t === "pay" ||
+    t === "pay now" ||
+    t === "execute" ||
+    t === "execute payment" ||
+    t.includes("confirm")
+  )
 }
 
 type ToolResult = {
@@ -34,55 +29,165 @@ export async function POST(
 ): Promise<NextResponse<AgentResponse>> {
 
   try {
-
     const body = await req.json()
 
     let { sessionId, userMessage } = body
 
-    if (!userMessage) {
-      throw new Error("userMessage required")
-    }
-
-    if (!sessionId) {
-      sessionId = crypto.randomUUID()
-    }
+    if (!userMessage) throw new Error("userMessage required")
+    if (!sessionId) sessionId = crypto.randomUUID()
 
     const agent = await createAgent()
-
     const history = getSession(sessionId)
 
     const paymentState = extractPaymentState(history)
 
-    // --------------------------------------------------
-    // Confirmation shortcut
-    // --------------------------------------------------
-
+    // confirm
     if (paymentState && isConfirmation(userMessage)) {
+
+      const tx = await generateText({
+        model: agent.model,
+        system: agent.system,
+        tools: agent.tools,
+        messages: [
+          {
+            role: "user",
+            content: `
+Transfer ${paymentState.amount} ${paymentState.tokenSymbol}
+to ${paymentState.destinationAddress}
+
+Use ERC20 transfer with token address ${paymentState.tokenAddress}
+`
+          }
+        ],
+        toolChoice: {
+          type: "tool",
+          toolName: "ERC20ActionProvider_transfer"
+        },
+        maxSteps: 1
+      })
+
+      const txResult = (tx.toolResults as ToolResult[] | undefined)
+        ?.find(r => r.toolName === "ERC20ActionProvider_transfer")
+
+      saveSession(sessionId, [])
+
+      if (txResult) {
+        return NextResponse.json({
+          sessionId,
+          response: txResult.result
+        })
+      }
 
       return NextResponse.json({
         sessionId,
-        response: "Executing payment transaction..."
+        response: "transaction failed"
       })
     }
-
-    // --------------------------------------------------
-    // Normal agent flow
-    // --------------------------------------------------
 
     const messages: Message[] = [
       ...history,
       {
         id: generateId(),
-        role: "user",
+        role: "user" as const,
         content: userMessage
       }
     ]
 
-    console.log("----- SESSION -----", sessionId)
+    const classification = isWoocommerceUrl(userMessage)
 
-    console.log("----- MESSAGES -----")
-    console.dir(messages, { depth: null })
+    // woo
+    if (classification && (classification.isWooCandidate || classification.isForgingBlockWoo)) {
 
+      const url = classification.url
+
+      const woo = await generateText({
+        model: agent.model,
+        system: agent.system,
+        tools: agent.tools,
+        messages: [
+          { role: "user", content: `woo_prepare_checkout ${url}` }
+        ],
+        toolChoice: { type: "tool", toolName: "woo_prepare_checkout" },
+        maxSteps: 1
+      })
+
+      const wooResult = (woo.toolResults as ToolResult[] | undefined)
+        ?.find(r => r.toolName === "woo_prepare_checkout")
+
+      if (!wooResult) throw new Error("woo failed")
+
+      const wooData = JSON.parse(wooResult.result || "{}")
+
+      if (wooData.error) {
+        return NextResponse.json({
+          sessionId,
+          response: `checkout failed: ${wooData.error}`
+        })
+      }
+
+      const payment = await generateText({
+        model: agent.model,
+        system: agent.system,
+        tools: agent.tools,
+        messages: [
+          { role: "user", content: `create_payment ${wooData.invoice_url}` }
+        ],
+        toolChoice: { type: "tool", toolName: "create_payment" },
+        maxSteps: 1
+      })
+
+      const paymentResult = (payment.toolResults as ToolResult[] | undefined)
+        ?.find(r => r.toolName === "create_payment")
+
+      if (!paymentResult) throw new Error("create_payment failed")
+
+      const p = JSON.parse(paymentResult.result || "{}")
+
+      const assistantMessage: Message = {
+        id: generateId(),
+        role: "assistant" as const,
+        content: `
+Invoice URL:
+${p.invoiceUrl}
+
+Network:
+${p.network?.name}
+
+Token:
+${p.token.symbol}
+
+Amount:
+${p.amount.decimal} ${p.token.symbol}
+
+Payment Address:
+${p.paymentAddress}
+
+Confirm to execute payment.
+`
+      }
+
+      const updatedMessages = addPaymentState(
+        [...messages, assistantMessage],
+        {
+          invoiceId: p.invoiceId,
+          amount: p.amount.decimal,
+          tokenSymbol: p.token.symbol,
+          tokenAddress: p.token.address,
+          destinationAddress: p.paymentAddress,
+          verifyUrl: p.verifyUrl,
+          network: p.network?.name
+        }
+      )
+
+      saveSession(sessionId, updatedMessages)
+
+      return NextResponse.json({
+        sessionId,
+        response: assistantMessage.content
+      })
+    }
+
+    // normal + hybrid
     const result = await generateText({
       model: agent.model,
       system: agent.system,
@@ -91,74 +196,110 @@ export async function POST(
       maxSteps: agent.maxSteps
     })
 
-    const { text } = result
-
     const toolResults = result.toolResults as ToolResult[] | undefined
-
-    console.log("----- TOOL RESULTS -----")
-    console.dir(toolResults, { depth: null })
-
-    console.log("----- FINAL TEXT -----")
-    console.log(text)
 
     let updatedMessages: Message[] = [
       ...messages,
       {
         id: generateId(),
-        role: "assistant",
-        content: text
+        role: "assistant" as const,
+        content: result.text
       }
     ]
 
-    // --------------------------------------------------
-    // Store payment state from create_payment
-    // --------------------------------------------------
+    let paymentParsed: any = null
 
+    // tool path
     if (toolResults) {
-
       for (const r of toolResults) {
-
         if (r.toolName === "create_payment") {
-
           try {
-
-            const parsed = JSON.parse(r.result)
-
-            if (parsed.recommendedTx && parsed.invoiceId) {
-
-              updatedMessages = addPaymentState(updatedMessages, {
-                invoiceId: parsed.invoiceId,
-                recommendedTx: parsed.recommendedTx,
-                verifyUrl: parsed.verifyUrl
-              })
-
-              console.log("Stored payment state", parsed.invoiceId)
-
+            const parsed = JSON.parse(r.result || "{}")
+            if (parsed.invoiceId && parsed.token && parsed.amount) {
+              paymentParsed = parsed
             }
-
-          } catch (err) {
-            console.error("Failed parsing tool result", err)
-          }
+          } catch { }
         }
       }
+    }
+
+    // fallback path
+    if (!paymentParsed) {
+      const match = result.text.match(
+        /https:\/\/api\.forgingblock\.io\/api\/v1\/invoice\?id=[a-z0-9-]+/i
+      )
+
+      if (match) {
+        const payment = await generateText({
+          model: agent.model,
+          system: agent.system,
+          tools: agent.tools,
+          messages: [
+            { role: "user", content: `create_payment ${match[0]}` }
+          ],
+          toolChoice: { type: "tool", toolName: "create_payment" },
+          maxSteps: 1
+        })
+
+        const fallbackResult = (payment.toolResults as ToolResult[] | undefined)
+          ?.find(r => r.toolName === "create_payment")
+
+        if (fallbackResult) {
+          try {
+            const parsed = JSON.parse(fallbackResult.result || "{}")
+            if (parsed.invoiceId && parsed.token && parsed.amount) {
+              paymentParsed = parsed
+            }
+          } catch { }
+        }
+      }
+    }
+
+    let responseText = result.text
+
+    if (paymentParsed) {
+      updatedMessages = addPaymentState(updatedMessages, {
+        invoiceId: paymentParsed.invoiceId,
+        amount: paymentParsed.amount.decimal,
+        tokenSymbol: paymentParsed.token.symbol,
+        tokenAddress: paymentParsed.token.address,
+        destinationAddress: paymentParsed.paymentAddress,
+        verifyUrl: paymentParsed.verifyUrl,
+        network: paymentParsed.network?.name
+      })
+
+      responseText = `
+Invoice URL:
+${paymentParsed.invoiceUrl}
+
+Network:
+${paymentParsed.network?.name}
+
+Token:
+${paymentParsed.token.symbol}
+
+Amount:
+${paymentParsed.amount.decimal} ${paymentParsed.token.symbol}
+
+Payment Address:
+${paymentParsed.paymentAddress}
+
+Confirm to execute payment.
+`
     }
 
     saveSession(sessionId, updatedMessages)
 
     return NextResponse.json({
       sessionId,
-      response: text
+      response: responseText
     })
 
   } catch (error) {
-
-    console.error("Agent error:", error)
+    console.error("agent error", error)
 
     return NextResponse.json({
-      error:
-        error instanceof Error
-          ? error.message
-          : "Agent error"
+      error: error instanceof Error ? error.message : "agent error"
     })
   }
 }
