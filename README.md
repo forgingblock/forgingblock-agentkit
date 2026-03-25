@@ -125,353 +125,153 @@ ForgingBlock API
 Blockchain (Base / EVM networks)
 ```
 
-Wallet execution is handled through an **AgentKit wallet provider**.
+---
+
+# Hybrid Execution Model
+
+```
+User Input
+   │
+   ├── WooCommerce URL ───────────────┐
+   │                                 ▼
+   │                         woo_prepare_checkout
+   │                                 │
+   │                                 ▼
+   │                         create_payment (forced)
+   │                                 │
+   │                                 ▼
+   │                         Store Payment State
+   │                                 │
+   │                                 ▼
+   │                         Execute / Confirm
+   │
+   └── ForgingBlock Checkout ────────┐
+                                     ▼
+                              generateText (LLM)
+                                     │
+                        ┌────────────┴────────────┐
+                        ▼                         ▼
+               toolResults present        toolResults missing
+                        │                         │
+                        ▼                         ▼
+               create_payment OK        fallback → extract invoice
+                        │                         │
+                        ▼                         ▼
+                     Store State         force create_payment
+                        │                         │
+                        └───────────────┬─────────┘
+                                        ▼
+                                 Execute Payment
+```
 
 ---
 
 # Wallet Support
 
-This example uses **Privy embedded wallets** for simplicity and quick testing.
+This example uses Privy embedded wallets, but AgentKit supports multiple wallet providers.
 
-Privy provides:
-
-* email authentication
-* embedded EVM wallets
-* secure key management
-* easy AgentKit integration
-
-However, **Privy is not required**.
-
-The stack is built on **Coinbase AgentKit**, which supports multiple wallet providers.
-
-Supported examples include:
-
-* Privy embedded wallets
-* Coinbase Wallet
-* WalletConnect
-* private-key wallets
-* custom wallet providers
-
-Because the wallet layer is abstracted through the AgentKit `WalletProvider`, you can replace Privy without modifying the payment agent logic.
-
-Privy is used here purely as a **convenient example wallet provider**.
+---
 
 # System Prompt Behavior
 
-The agent operates with a structured system prompt enforcing safe payment execution.
+## Payment Resolution
 
-### Payment Resolution
-
-When a user provides a checkout URL or checkout ID:
-
-```
-https://api.forgingblock.io/api/v1/checkout?id=<checkout_id>
-```
-
-the agent must call:
+Agent attempts to call:
 
 ```
 create_payment
 ```
 
-The agent **never constructs payment instructions manually**.
-
-> ⚠️ Always use `recommendedTx` returned by the API.
+If tool call is missing, fallback extracts invoice and retries.
 
 ---
 
-### ⚠️ DO NOT USE `watchers`
+## WooCommerce Checkout
 
-- `watchers` is NOT a payment source
-- it is often empty
-- it does NOT contain execution data
+Flow:
 
-❌ Do NOT:
-- extract payment address from `watchers`
-- rely on `watchers`
-
----
-
-### Payment Confirmation
-
-After resolving a checkout, the agent shows:
+1. detect URL
+2. call:
 
 ```
-Invoice URL
-Invoice ID
-Network
-Token
-Amount
+woo_prepare_checkout
 ```
 
-The user must confirm before the transaction is executed.
-
-Examples:
+3. call:
 
 ```
-confirm
-confirm payment
-pay now
-execute payment
+create_payment
 ```
 
 ---
 
-### Transaction Execution
+## Payment Confirmation
 
-After confirmation the agent:
+Supports:
 
-1. switches the wallet network
-2. executes the transaction
-3. waits for the transaction hash
-4. verifies payment status
+Manual confirmation OR auto execution based on intent.
 
 ---
 
-### Transaction Rules
+## Transaction Execution
 
-The agent must use the transaction returned by the API:
+Uses:
 
 ```
-recommendedTx
+ERC20ActionProvider_transfer
 ```
-
-ERC-20 transfers are encoded in the transaction `data` field.
-
-The agent **must not recompute token transfers**.
 
 ---
 
-### Payment Verification
-
-After sending the transaction:
+## Payment Verification
 
 ```
 verify_payment
 ```
 
-A payment is successful when:
+Status:
 
 ```
-status = completed
+completed
 ```
 
 ---
 
 # Available Agent Actions
 
----
+## create_order
 
-# create_order
+Creates new order.
 
-Creates a new payment order.
+## create_payment
 
-Requires:
+Returns:
 
-```
-FB_API_KEY
-```
+- invoiceId
+- invoiceUrl
+- network
+- token
+- amount
+- recommendedTx
+- verifyUrl
 
-If the API key is not defined, this action is not available.
+## verify_payment
 
-### Parameters
-
-```
-price_amount
-price_currency
-title (optional)
-description (optional)
-```
-
-### Example
-
-```
-create_order(
-  price_amount=25,
-  price_currency="USD",
-  title="T-shirt purchase"
-)
-```
-
-### Returns
-
-```
-checkout_url
-checkout_id
-invoice_url
-order_id
-```
+Checks payment status.
 
 ---
 
-# create_payment
-
-Resolves a checkout URL or checkout ID into blockchain payment instructions.
-
-Available **without API key**.
-
-### Input
+# Example Flow
 
 ```
-checkout URL
-or
-checkout ID
-```
-
-Example:
-
-```
-create_payment(
-  url="https://api.forgingblock.io/api/v1/checkout?id=..."
-)
-```
-
-### Returns
-
-```
-invoiceId
-invoiceUrl
-network
-token
-amount
-recommendedTx
-verifyUrl
-```
-
-`recommendedTx` contains the exact transaction required to perform the payment.
-
----
-
-# verify_payment
-
-Checks the status of an invoice.
-
-Available **without API key**.
-
-### Input
-
-```
-invoiceId
-```
-
-### Returns
-
-```
-status
-cryptoAmount
-crypto_underpaid_amount
-crypto_overpaid_amount
-```
-
-Example statuses:
-
-```
-new
-partially_paid
-completed
-expired
-```
-
----
-
-# Example Flow — Merchant
-
-Merchant creates an order.
-
-```
-create_order
-```
-
-Example request:
-
-```
-Create a $25 USD order for a T-shirt
-```
-
-Response:
-
-```
-checkout_url
-```
-
-Example checkout link:
-
-```
-https://api.forgingblock.io/api/v1/checkout?id=1234...
-```
-
-The merchant shares this link with a customer.
-
----
-
-# Example Flow — AI Payment Agent
-
-User provides a checkout:
-
-```
-Pay this checkout
-https://api.forgingblock.io/api/v1/checkout?id=...
-```
-
-Agent calls:
-
-```
-create_payment
-```
-
-Agent shows payment details:
-
-```
-Invoice URL
-Invoice ID
-Network
-Token
-Amount
-```
-
-User confirms:
-
-```
-confirm payment
-```
-
-Agent executes:
-
-```
-wallet_switchNetwork
-wallet_sendTransaction
-```
-
-Then verifies:
-
-```
-verify_payment
-```
-
-Final result:
-
-```
-Payment completed
+checkout → create_payment → confirm/auto → transfer → verify → completed
 ```
 
 ---
 
 # Chat Session Storage
 
-This example stores chat sessions **in memory** for 20 minutes (order is fixed 20-minute lifetime).
-
-This is suitable only for development.
-
-Production deployments should store sessions in:
-
-- **Redis**
-- **PostgreSQL**
-
-This ensures:
-
-* persistent conversations
-* multi-instance deployments
-* reliable payment flows
+In-memory. Use Redis in production.
 
 ---
 
