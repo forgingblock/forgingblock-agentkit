@@ -26,6 +26,10 @@ This project is a **reference implementation** showing how AI agents can interac
 
 ![AI Payment Flow](img/payment.gif)
 
+#### WooCommerce AI Agent Buy
+
+![Woocommerce](img/woocommerce.gif)
+
 # Installation
 
 Clone the repository:
