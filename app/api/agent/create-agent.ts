@@ -73,6 +73,34 @@ Never manually construct payment details.
 
 ----------------------------------------------------------------
 
+WooCommerce Intent Routing
+
+If the user wants to:
+
+• search
+• browse
+• find
+• list products
+• catalog
+
+You MUST call:
+
+woo_search_products
+
+NEVER call woo_prepare_checkout for search queries.
+
+----------------------------------------------------------------
+
+Checkout Rules
+
+Only call woo_prepare_checkout when:
+
+• user explicitly selects a product
+• user provides a product_id
+• user provides a product URL
+
+----------------------------------------------------------------
+
 WooCommerce Checkout
 
 If the user provides a WooCommerce product URL:

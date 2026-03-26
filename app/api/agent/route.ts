@@ -6,6 +6,26 @@ import { getSession, saveSession } from "@/app/lib/agent-session"
 import { isWoocommerceUrl } from "@/app/lib/url-woocommerce"
 import { extractPaymentState, addPaymentState } from "@/app/lib/payment-state"
 
+const STOP_WORDS = new Set([
+  "find",
+  "search",
+  "browse",
+  "list",
+  "catalog",
+  "on",
+  "in",
+  "for",
+  "the",
+  "a",
+  "an",
+  "me",
+  "show",
+  "give",
+  "want",
+  "to",
+  "at"
+])
+
 function isConfirmation(text: string) {
   const t = text.trim().toLowerCase()
   return (
@@ -92,11 +112,90 @@ Use ERC20 transfer with token address ${paymentState.tokenAddress}
         content: userMessage
       }
     ]
-
+    let base: string | null = null
     const classification = isWoocommerceUrl(userMessage)
 
-    // woo
     if (classification && (classification.isWooCandidate || classification.isForgingBlockWoo)) {
+      try {
+        base = new URL(classification.url).origin
+      } catch {
+        base = null
+      }
+    }
+
+    // woo
+    const hasUrl = classification && (classification.isWooCandidate || classification.isForgingBlockWoo)
+    const isBuyIntent = /buy|purchase|checkout|pay/i.test(userMessage)
+    const isSearchIntent = /find|search|browse|list|catalog/i.test(userMessage)
+    if (isSearchIntent && base) {
+
+      const raw = userMessage
+        .replace(/https?:\/\/\S+/g, "")
+        .toLowerCase()
+
+      const query = raw
+        .split(/\s+/)
+        .filter((w: string) => w && !STOP_WORDS.has(w))
+        .map((w: string) => w.replace(/s$/, ""))
+        .join(" ")
+        .trim()
+
+      const isAdvancedQuery = /cheaper|under|below|price|cheapest|less than/i.test(userMessage)
+
+      if (!isAdvancedQuery) {
+        const search = await generateText({
+          model: agent.model,
+          system: agent.system,
+          tools: agent.tools,
+          messages: [
+            {
+              role: "user",
+              content: JSON.stringify({ base, query })
+            }
+          ],
+          toolChoice: {
+            type: "tool",
+            toolName: "woo_search_products"
+          },
+          maxSteps: 1
+        })
+
+        const searchResult = (search.toolResults as ToolResult[] | undefined)
+          ?.find(r => r.toolName === "woo_search_products")
+
+        if (searchResult) {
+          const data = JSON.parse(searchResult.result || "{}")
+
+          return NextResponse.json({
+            sessionId,
+            response: JSON.stringify(data, null, 2)
+          })
+        }
+      }
+
+      const res = await fetch(
+        `${base}/wp-json/forgingblock/v1/agent/products`
+      )
+
+      const data = await res.json()
+
+      const filtered = data.items.filter((p: any) => {
+        if (/cheaper|under|below|less than/i.test(userMessage)) {
+          const match = userMessage.match(/(\d+(\.\d+)?)/)
+          if (match) {
+            const price = parseFloat(match[1])
+            return p.price_float <= price
+          }
+        }
+        return true
+      })
+
+      return NextResponse.json({
+        sessionId,
+        response: JSON.stringify(filtered, null, 2)
+      })
+    }
+    if (hasUrl && isBuyIntent) {
 
       const url = classification.url
 
