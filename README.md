@@ -18,7 +18,7 @@ The agent can:
 This project is a **reference implementation** showing how AI agents can interact with:
 
 * ForgingBlock crypto payment infrastructure
-* WooCommerce agent-compatible APIs
+* WooCommerce agent-compatible APIs - requires [plugin install](https://github.com/forgingblock/forgingblock-woocommerce-ai) on WooCommerce instance
 
 ---
 
