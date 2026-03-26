@@ -13,8 +13,14 @@ The agent can:
 * resolve checkout links into blockchain transactions
 * execute payments
 * verify payment status
+* search and interact with WooCommerce store catalogs
 
-This project is a **reference implementation** showing how AI agents can interact with ForgingBlock crypto payment infrastructure.
+This project is a **reference implementation** showing how AI agents can interact with:
+
+* ForgingBlock crypto payment infrastructure
+* WooCommerce agent-compatible APIs
+
+---
 
 ## Quick Demo
 
@@ -26,9 +32,15 @@ This project is a **reference implementation** showing how AI agents can interac
 
 ![AI Payment Flow](img/payment.gif)
 
+#### WooCommerce AI Agent Search Store Catalog
+
+![Woocommerce Catalog Search](img/woocommerce_catalog_search.gif)
+
 #### WooCommerce AI Agent Buy
 
 ![Woocommerce](img/woocommerce.gif)
+
+---
 
 # Installation
 
@@ -44,6 +56,8 @@ Install dependencies:
 ```sh
 npm install
 ```
+
+---
 
 # Environment Setup
 
@@ -108,25 +122,25 @@ Open the application:
 http://localhost:3000
 ```
 
+---
+
 # Architecture Overview
 
 ```
 User / AI Agent
         │
         ▼
-Next.js Agent API
-(app/api/agent)
+Next.js Agent API (/api/agent)
         │
-        ▼
-AgentKit Tools
-(create_order / create_payment / verify_payment)
-        │
-        ▼
-ForgingBlock API
-(api.forgingblock.io)
-        │
-        ▼
-Blockchain (Base / EVM networks)
+        ├───────────────┬────────────────────────┬──────────────────────┐
+        ▼               ▼                        ▼                      ▼
+Woo Tools        Payment Tools            Wallet Execution       LLM Reasoning
+        │               │                        │                      │
+        ▼               ▼                        ▼                      ▼
+Woo REST API     ForgingBlock API         ERC20 Transfer         Local Filtering
+        │               │                        │                      │
+        ▼               ▼                        ▼                      ▼
+Woo Store        Invoice + Routes         Blockchain Tx          Ranked Results
 ```
 
 ---
@@ -141,7 +155,7 @@ User Input
    │                         woo_prepare_checkout
    │                                 │
    │                                 ▼
-   │                         create_payment (forced)
+   │                         create_payment
    │                                 │
    │                                 ▼
    │                         Store Payment State
@@ -149,77 +163,200 @@ User Input
    │                                 ▼
    │                         Execute / Confirm
    │
-   └── ForgingBlock Checkout ────────┐
+   ├── Simple Search ────────────────┐
+   │                                 ▼
+   │                         woo_search_products
+   │
+   └── Advanced Query ───────────────┐
                                      ▼
-                              generateText (LLM)
+                              Fetch catalog
                                      │
-                        ┌────────────┴────────────┐
-                        ▼                         ▼
-               toolResults present        toolResults missing
-                        │                         │
-                        ▼                         ▼
-               create_payment OK        fallback → extract invoice
-                        │                         │
-                        ▼                         ▼
-                     Store State         force create_payment
-                        │                         │
-                        └───────────────┬─────────┘
-                                        ▼
-                                 Execute Payment
+                                     ▼
+                              Local filtering (JS / LLM)
 ```
 
 ---
 
-# Wallet Support
+# WooCommerce Agent API
 
-This example uses Privy embedded wallets, but AgentKit supports multiple wallet providers.
+All endpoints are exposed via WordPress REST:
+
+```
+/wp-json/forgingblock/v1/agent/*
+```
+
+## Endpoints
+
+### List / Search Products
+
+```
+GET /wp-json/forgingblock/v1/agent/products
+GET /wp-json/forgingblock/v1/agent/products?q=search&page=1
+```
 
 ---
 
-# System Prompt Behavior
-
-## Payment Resolution
-
-Agent attempts to call:
+### Get Product
 
 ```
-create_payment
+GET /wp-json/forgingblock/v1/agent/products/{id}
 ```
-
-If tool call is missing, fallback extracts invoice and retries.
 
 ---
 
-## WooCommerce Checkout
+### Create Order
 
-Flow:
+```
+POST /wp-json/forgingblock/v1/agent/create-order
+```
 
-1. detect URL
-2. call:
+```json
+{
+  "product_id": 123,
+  "quantity": 1
+}
+```
+
+---
+
+### Create Checkout
+
+```
+POST /wp-json/forgingblock/v1/agent/checkout
+```
+
+```json
+{
+  "order_id": 123,
+  "order_key": "wc_order_xxx"
+}
+```
+
+---
+
+# OpenAI / Claude Tool Schema
+
+Example tool definitions for agent integration:
+
+```json
+{
+  "name": "woo_search_products",
+  "description": "Search WooCommerce products",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "base": { "type": "string" },
+      "query": { "type": "string" },
+      "page": { "type": "number" }
+    },
+    "required": ["base"]
+  }
+}
+```
+
+```json
+{
+  "name": "woo_prepare_checkout",
+  "description": "Prepare WooCommerce checkout",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "base": { "type": "string" },
+      "url": { "type": "string" },
+      "product_id": { "type": "number" },
+      "quantity": { "type": "number" }
+    }
+  }
+}
+```
+
+```json
+{
+  "name": "create_payment",
+  "description": "Generate payment details",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "invoice_url": { "type": "string" }
+    },
+    "required": ["invoice_url"]
+  }
+}
+```
+
+---
+
+# Agent Prompt Specification
+
+## Intent Routing Rules
+
+### Search
+
+If user intent is:
+
+```
+find / search / browse / list
+```
+
+→ MUST call:
+
+```
+woo_search_products
+```
+
+---
+
+### Checkout
+
+Only call:
 
 ```
 woo_prepare_checkout
 ```
 
-3. call:
+when:
+
+* product URL provided
+* product_id provided
+* explicit "buy" intent
+
+---
+
+### Advanced Queries
+
+If user asks:
 
 ```
-create_payment
+cheaper than
+under price
+best / cheapest
+```
+
+→ DO NOT rely on Woo API
+
+→ Fetch catalog and filter locally
+
+---
+
+### Payment
+
+Always:
+
+```
+create_payment → confirm → transfer → verify
 ```
 
 ---
 
-## Payment Confirmation
+# Payment Flow
 
-Supports:
-
-Manual confirmation OR auto execution based on intent.
+```
+create_payment → confirm → ERC20 transfer → verify_payment
+```
 
 ---
 
-## Transaction Execution
-
-Uses:
+# Wallet Execution
 
 ```
 ERC20ActionProvider_transfer
@@ -227,48 +364,35 @@ ERC20ActionProvider_transfer
 
 ---
 
-## Payment Verification
+# Available Agent Actions
 
-```
-verify_payment
-```
+## Payments
 
-Status:
-
-```
-completed
-```
+* create_order
+* create_payment
+* verify_payment
 
 ---
 
-# Available Agent Actions
+## WooCommerce
 
-## create_order
-
-Creates new order.
-
-## create_payment
-
-Returns:
-
-- invoiceId
-- invoiceUrl
-- network
-- token
-- amount
-- recommendedTx
-- verifyUrl
-
-## verify_payment
-
-Checks payment status.
+* woo_search_products
+* woo_get_product
+* woo_prepare_checkout
+* detect_woocommerce_capabilities
 
 ---
 
 # Example Flow
 
 ```
-checkout → create_payment → confirm/auto → transfer → verify → completed
+find mugs
+→ list products
+→ select product
+→ checkout
+→ confirm
+→ pay
+→ verify
 ```
 
 ---
@@ -281,20 +405,27 @@ In-memory. Use Redis in production.
 
 # Production Improvements
 
-This project can be extended with:
+### Search
 
-### Persistent Session Storage
+* fuzzy matching
+* ranking
+* embeddings
 
-- **Redis**
-- **PostgreSQL**
+---
 
-### Payment Webhooks
+### Payments
 
-API Reference [Webhook callback](https://forgingblock.readme.io/reference/payment-callback) section:
+* webhook handling
+* retries
+* persistence
 
-Handle events such as:
-invoice `completed`
-invoice `partially_paid`
+---
+
+### Agent UX
+
+* multi-turn selection
+* "buy first result"
+* structured UI output
 
 ---
 
